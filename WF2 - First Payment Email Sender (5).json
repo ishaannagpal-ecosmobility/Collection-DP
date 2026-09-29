@@ -1,0 +1,2353 @@
+{
+  "name": "WF2 - First Payment Email Sender",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf2-start",
+        "options": {}
+      },
+      "id": "526d7013-da31-4716-9fea-b5a69f40a784",
+      "name": "WF1 Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        16,
+        640
+      ],
+      "webhookId": "c9ce4787-b35b-48f8-9159-f6ee958b150d",
+      "notes": "This node's Production URL is what you paste into WF1's Config node as wf2WebhookUrl once this workflow is activated. responseMode=onReceived acks WF1 immediately rather than making it wait for the whole batch of emails to send."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "sheetDocumentId",
+              "type": "string",
+              "value": "1S0wiqEgnTBSwLVaUOCkLqcs8Jdqml1PySHjJigkHXfQ"
+            },
+            {
+              "id": "a2",
+              "name": "sheetName",
+              "type": "string",
+              "value": "Sheet1"
+            },
+            {
+              "id": "a3",
+              "name": "companyName",
+              "type": "string",
+              "value": "Eco Mobility"
+            },
+            {
+              "id": "a4",
+              "name": "fromEmail",
+              "type": "string",
+              "value": "Manoj Kumar <manoj.k@ecosmobility.com>"
+            },
+            {
+              "id": "a5",
+              "name": "fromName",
+              "type": "string",
+              "value": "Manoj Kumar"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "16e53e1b-aa9a-4a9d-9d35-fdff47c2467f",
+      "name": "Config - Fill In After Import",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        240,
+        736
+      ],
+      "notes": "sheetDocumentId must be the SAME Google Sheet as WF1's Config node - copy the value across. All placeholder REPLACE_WITH_... values must be filled in before running. These stay inside n8n's own storage, never shared elsewhere."
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Config - Fill In After Import').all()[0].json.sheetDocumentId }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "={{ $('Config - Fill In After Import').all()[0].json.sheetName }}"
+        },
+        "options": {}
+      },
+      "id": "b7600eb2-1de8-4b69-ad0e-ee52469078f9",
+      "name": "Read Master Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        464,
+        736
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "OCIyTpxyp8WoPLwe",
+          "name": "Ishaan ECOS"
+        }
+      },
+      "notes": "Reads all rows to find guests needing their first payment email and to collect every existing Ticket Number for uniqueness checking. Requires the same Google Sheets OAuth2 credential as WF1."
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all().map(i => i.json);\nconst existingTicketNumbers = rows\n  .map(r => String(r['Ticket Number'] || '').trim())\n  .filter(Boolean);\n\nreturn rows\n  .filter(r => r.Status === 'Pending' && !String(r.conversationId || '').trim())\n  .map(r => {\n    const row = Object.assign({}, r);\n    row._existingTicketNumbers = existingTicketNumbers;\n    return { json: row };\n  });"
+      },
+      "id": "0405a801-ab98-437b-abbd-c968acf55a76",
+      "name": "Filter Rows Needing First Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        688,
+        480
+      ],
+      "notes": "A guest is due a first email once: Status is Pending AND conversationId is still blank. _existingTicketNumbers rides along on every row so the grouping step downstream can generate a Ticket Number that's guaranteed not to collide with one already in the sheet."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond-haspdf",
+              "leftValue": "={{ $json['Invoice PDF fileId'] }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            },
+            {
+              "id": "1f6eb30a-c628-414c-ab0e-bedb4797e416",
+              "leftValue": "={{ $json.customer_id.toUpperCase() }}",
+              "rightValue": "ACCENTURE",
+              "operator": {
+                "type": "string",
+                "operation": "notContains"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "138b330f-30e4-4d2c-b210-9ab68a17646e",
+      "name": "Filter Bills Having PDF",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        912,
+        480
+      ],
+      "notes": "TRUE (fileId present, the normal case since WF1's Apps Script step already populated it) = download the PDF to attach. FALSE (fileId still blank) = skip download, that bill just won't have an attachment in the first email rather than erroring the whole batch."
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "54fa1dc5-2624-44d1-8a5e-6a316e4adb81",
+      "name": "Loop Bills for PDF Download",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1136,
+        672
+      ],
+      "notes": "One Drive download per bill needing an invoice PDF attached. Output 0 = done, output 1 = current batch."
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json['Invoice PDF fileId'] }}"
+        },
+        "options": {}
+      },
+      "id": "f2a0a021-2d9e-401e-8a5c-2e60c8e15959",
+      "name": "Download Invoice PDF",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1360,
+        672
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "8a69W35Y9s0S4v49",
+          "name": "Ishaan ECOS"
+        }
+      },
+      "notes": "Uses the same Google OAuth2 credential as WF1's Drive nodes."
+    },
+    {
+      "parameters": {
+        "jsCode": "const bill = $('Loop Bills for PDF Download').all()[0].json;\nconst binaryIn = $input.all()[0].binary || {};\nconst out = { json: Object.assign({}, bill) };\nif (binaryIn.data) {\n  const safeName = String(bill.bill_no || 'invoice').replace(/[\\/\\\\]/g, '-') + '.pdf';\n  out.binary = { file: Object.assign({}, binaryIn.data, { fileName: safeName, fileExtension: 'pdf', mimeType: binaryIn.data.mimeType || 'application/pdf' }) };\n}\nreturn out;\n"
+      },
+      "id": "57193536-30f8-4558-99b4-247336dd3a3a",
+      "name": "Combine Bill and Binary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1584,
+        720
+      ],
+      "notes": "Google Drive's download operation outputs the file under binary property 'data' by default - verify this against your n8n version. Renames it to 'file' for a consistent downstream key."
+    },
+    {
+      "parameters": {},
+      "id": "4bab0dca-4665-4fa9-9f15-514a90e1c9c1",
+      "name": "Merge PDF Download Paths",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1360,
+        352
+      ],
+      "notes": "Waits for BOTH the bills that had no fileId (Filter's false branch) and the bills that just finished the PDF download loop (Loop's done output) before continuing, and concatenates them into one flat list. Same reasoning as WF1's Merge PDF Lookup Paths node - without this, Group Bills into Email Threads fires before the loop branch has a chance to run."
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst existingSet = new Set();\nif (items.length && items[0].json._existingTicketNumbers) {\n  items[0].json._existingTicketNumbers.forEach(t => existingSet.add(String(t)));\n}\n\nfunction newTicketNumber() {\n  let t;\n  do {\n    t = String(Math.floor(10000000 + Math.random() * 90000000));\n  } while (existingSet.has(t));\n  existingSet.add(t);\n  return t;\n}\n\nconst groups = {};\nfor (const item of items) {\n  const bill = item.json;\n  const key = bill.customer_id + '||' + bill.guest_name;\n  if (!groups[key]) {\n    groups[key] = {\n      customer_id: bill.customer_id,\n      guest_name: bill.guest_name,\n      emailTo: bill.email_to,\n      emailCc: bill.email_cc,\n      cseEmail: bill.cse_email_id,\n      cseName: bill.cse_name,\n      bills: [],\n      binariesByBillNo: new Map()\n    };\n  }\n  groups[key].bills.push(bill);\n  if (item.binary && item.binary.file && !groups[key].binariesByBillNo.has(bill.bill_no)) {\n    groups[key].binariesByBillNo.set(bill.bill_no, item.binary.file);\n  }\n}\n\nconst output = [];\nfor (const key of Object.keys(groups)) {\n  const g = groups[key];\n  const hasAllLinks = g.bills.every(b => String(b['CC Avenue Payment Link'] || '').trim() && String(b['Invoice ID'] || '').trim());\n  if (hasAllLinks) {\n    const outItem = {\n      json: {\n        customer_id: g.customer_id,\n        guest_name: g.guest_name,\n        emailTo: g.emailTo,\n        emailCc: g.emailCc,\n        cseEmail: g.cseEmail,\n        cseName: g.cseName,\n        ticketNumber: newTicketNumber(),\n        bills: g.bills\n      },\n      binary: {}\n    };\n    const keys = [];\n    let idx = 0;\n    for (const bin of g.binariesByBillNo.values()) {\n      const k = 'attachment_' + idx;\n      outItem.binary[k] = bin;\n      keys.push(k);\n      idx++;\n    }\n    outItem.json._binaryKeys = keys.join(',');\n    output.push(outItem);\n  }\n}\nreturn output;\n"
+      },
+      "id": "1e267cd8-dcfb-4e66-a41d-49a7704ab4da",
+      "name": "Group Bills into Email Threads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1584,
+        352
+      ],
+      "notes": "Groups by customer_id+guest_name - same thread key WF1 uses - so a guest with several bills (Single or Consolidate) gets ONE combined first email listing every bill, matching the 'Submission of Invoices' template's per-bill summary table. Generates one unique 8-digit Ticket Number per thread, checked against every ticket number already in the sheet plus ones just generated in this same run. Re-keys each bill's downloaded PDF binary onto the group item as attachment_0, attachment_1, ... for the Outlook node to reference."
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "8a5d02ae-942a-4cce-ba0e-f2e414e40eb3",
+      "name": "Loop Email Threads",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1808,
+        352
+      ],
+      "notes": "One first-payment email per guest thread. Output 0 = done, output 1 = current batch."
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $('Config - Fill In After Import').all()[0].json;\nconst thread = $input.all()[0].json;\nconst bin = $input.all()[0].binary || {};\n\nfunction esc(v) { return String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }\n\nconst isConsolidate = String((thread.bills[0] && thread.bills[0].cc_avenue_link) || '').trim().toLowerCase() === 'consolidate';\nconst isAccenture = String((thread.bills[0] && thread.bills[0].customer_id) || '').toUpperCase().includes('ACCENTURE');\n\nconst td = \"style='border:1px solid #ccc;padding:4px;'\";\nconst extraCell = b => isAccenture ? `<td ${td}>${esc(b.tot_hrs)}</td><td ${td}>${esc(b.tot_kms)}</td>` : '';\nconst extraHeaders = isAccenture ? ['Total Hrs','Total Kms'] : [];\n\nlet headers, rowsHtml;\nif (isConsolidate) {\n  rowsHtml = thread.bills.map(b => `<tr><td ${td}>${esc(b.guest_name)}</td><td ${td}>${esc(b.duty_date)}</td><td ${td}>${esc(b.car_type)}</td><td ${td}>${esc(b.package)}</td>${extraCell(b)}<td ${td}>${esc(b.city)}</td><td ${td}>${esc(b.duty_slip_no)}</td><td ${td}>${esc(b.booking_no)}</td><td ${td}>${esc(b.bill_no)}</td><td ${td}>${esc(b.bill_date)}</td><td ${td}>${esc(b.bill_amount)}</td><td ${td}>${esc(b.customer_id)}</td></tr>`).join('');\n  headers = ['Guest Name','Duty Date','Car Booked Type','Package',...extraHeaders,'City','Duty Slip No.','Booking No.','Bill No.','Bill Date','Bill Amount','Customer Id'];\n} else {\n  rowsHtml = thread.bills.map(b => `<tr><td ${td}>${esc(b.guest_name)}</td><td ${td}><a href='${esc(b['CC Avenue Payment Link'])}'>${esc(b['CC Avenue Payment Link'])}</a></td><td ${td}>${esc(b.duty_date)}</td><td ${td}>${esc(b.car_type)}</td><td ${td}>${esc(b.package)}</td>${extraCell(b)}<td ${td}>${esc(b.city)}</td><td ${td}>${esc(b.duty_slip_no)}</td><td ${td}>${esc(b.booking_no)}</td><td ${td}>${esc(b.bill_no)}</td><td ${td}>${esc(b.bill_date)}</td><td ${td}>${esc(b.bill_amount)}</td><td ${td}>${esc(b.customer_id)}</td></tr>`).join('');\n  headers = ['Guest Name','CC Avenue Payment Link','Duty Date','Car Booked Type','Package',...extraHeaders,'City','Duty Slip No.','Booking No.','Bill No.','Bill Date','Bill Amount','Customer Id'];\n}\nconst headerHtml = headers.map(h => `<th style='border:1px solid #ccc;padding:4px;background-color:#eeeeee;'>${h}</th>`).join('');\n\nconst totalAmount = thread.bills.reduce((sum, b) => sum + parseFloat(b.bill_amount || 0), 0).toFixed(2);\nconst paymentLinkLine = isConsolidate ? `<p><strong>Payment Link:</strong> <a href='${esc(thread.bills[0]['CC Avenue Payment Link'])}'>${esc(thread.bills[0]['CC Avenue Payment Link'])}</a></p>` : '';\n\n\nconst LOGO_URL = 'https://drive.google.com/uc?export=view&id=1w4Xl20VAyn71IXhpc7nRKJWWZXNod70f';\nconst BANNER_URL = 'https://drive.google.com/uc?export=view&id=15MTiwDueasdeOuxcOQbQiDEM_m5k9ygt';\n\nconst CSE_SIGNATURE = {\n  'manoj.k@ecosmobility.com': { name: 'MANOJ KUMAR', mobile: '9289526748' },\n  'pushkar.singh@ecosmobility.com': { name: 'PUSHKAR SINGH', mobile: '9220449152' },\n  'hifza.parveen@ecosmobility.com': { name: 'HIFZA PARVEEN', mobile: '9717116659' },\n  'deepak.tiwari@ecosmobility.com': { name: 'DEEPAK TIWARI', mobile: '9211553594' }\n};\nconst sigInfo = CSE_SIGNATURE[String(thread.cseEmail || '').toLowerCase()] || { name: esc(thread.cseName).toUpperCase(), mobile: '' };\n\nconst signature = `<p style='color:#1F3864;'>Thanks &amp; Regards,</p><table cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;'><tr><td style='vertical-align:top; padding-right:15px;'><img src='${LOGO_URL}' width='110' alt='ECO Mobility' style='display:block;'></td><td style='vertical-align:top; font-family:Arial,sans-serif; font-size:13px; color:#1F3864;'><div style='color:#C00000; font-weight:bold; font-size:16px;'>${sigInfo.name}</div><div style='font-weight:bold;'>ASSISTANT MANAGER - FINANCE</div><div style='font-weight:bold;'><span style='color:#C00000;'>M</span> +91- ${esc(sigInfo.mobile)}</div><div style='height:10px;'></div><div style='font-weight:bold;'>Reporting Manager :</div><div>Mr. Dinesh Guleria | <a href='mailto:Dinesh.guleria@ecosmobility.com' style='color:#1F3864;'>Dinesh.guleria@ecosmobility.com</a></div></td></tr></table><p style='font-family:Arial,sans-serif; font-size:13px; color:#1F3864;'><strong>ECOS (India) Mobility &amp; Hospitality Ltd.</strong><br/><strong>Corp Office:</strong> Plot No.45, 1st Floor, Corner Market, Malviya Nagar, New Delhi 110017<br/><strong>24x7 Reservations:</strong> T: +91-11-4079-4079 | E: <a href='mailto:cars@ecosmobility.com' style='color:#1F3864;'>cars@ecosmobility.com</a><br/>W: <a href='https://www.ecosmobility.com' style='color:#1F3864;'>www.ecosmobility.com</a></p><p style='font-family:Arial,sans-serif; font-size:13px; color:#1F3864;'><strong>Ground Transportation in 100+ cities in India and 30+ countries worldwide</strong><br/><strong style='color:#000;'>Chauffeured Car Rental | Employee Transportation Service | Self Drive</strong></p><img src='${BANNER_URL}' width='600' alt='Enjoy Your Travel With Our Cars, Worldwide' style='display:block; max-width:100%;'>`;\n\n\nconst introLine = isAccenture\n  ? `Thank you for choosing our services.<br/>For your convenience, a payment link has been provided below:`\n  : `Thank you for choosing our services.<br/>Please find attached the invoices along with the relevant supporting documents. For your convenience, a payment link has also been provided below:`;\n\nconst reviewLine = isAccenture\n  ? `We request you to kindly review the details and process the payment at the earliest.`\n  : `We request you to kindly review the documents and process the payment at the earliest.`;\n\nconst bodyHtml = `<p>Dear ${esc(thread.bills[0].booker_name)},</p><p>Greetings from ${esc(cfg.companyName)}!</p><p>${introLine}</p><p>${reviewLine}</p><p>Once the payment is completed, please confirm by return email. In case of any discrepancy or clarification required, feel free to reach out via email or contact the undersigned.<br/>We appreciate your continued support and cooperation.</p><p>Below is the summary of the services for your reference:</p><p><strong>Total Amount: ${esc(totalAmount)}</strong></p>${paymentLinkLine}<table style='border-collapse:collapse;'><tr>${headerHtml}</tr>${rowsHtml}</table>${signature}`;\n\n\nconst subject = `Submission of Invoices & Payment Link - ${thread.bills[0].group_name || ''} - ${cfg.companyName} - ${thread.guest_name} [Ref: ${thread.ticketNumber}]`;\n\nconst toList = String(thread.emailTo || '').split(/[;,]/).map(s => s.trim()).filter(Boolean);\nconst ccList = [];\nString(thread.emailCc || '').split(/[;,]/).forEach(s => { if (s.trim()) ccList.push(s.trim()); });\n\n\nconst out = Object.assign({}, thread);\nout.subject = subject;\nout.bodyHtml = bodyHtml;\nout.toRecipients = toList.join(';');\nout.ccRecipients = ccList.join(';');\n\nreturn { json: out, binary: bin };"
+      },
+      "id": "bb42143b-d7e7-426f-b8ad-4005c83480e9",
+      "name": "Build Email Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2032,
+        64
+      ],
+      "notes": "Builds subject/body from the 'Submission of Invoices & Payment Link' template text supplied 2026-07-20, with a per-bill summary table and a signature built dynamically from the sheet's cse_name/cse_email_id columns (placeholder designation text - swap in a real signature block/logo once one exists). Subject carries [Ref: <ticketNumber>] for WF4's regex fallback matching."
+    },
+    {
+      "parameters": {
+        "jsCode": "const sendResult = $input.all()[0].json;\nconst thread = $('Build Email Content').all()[0].json;\nconst msgId = sendResult.messageId || '';\nconst out = Object.assign({}, thread);\nout.conversationId = msgId;\nout.messageId = msgId;\nreturn { json: out };"
+      },
+      "id": "863834f1-6e26-4453-9b7d-5e2701accf98",
+      "name": "Record Send Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2704,
+        112
+      ],
+      "notes": "SMTP has no Graph-style conversationId, so this repurposes the two columns: conversationId becomes the ROOT Message-ID (stays fixed for the life of the thread, and is what Filter Rows Needing First Email checks to know a first email already went out), Message ID becomes the MOST RECENT Message-ID (for WF3 to set In-Reply-To/References against when it replies, so mail clients still thread the conversation visually via RFC 822 headers instead of a Graph conversationId). sendResult.messageId is nodemailer's generated Message-ID, exposed by n8n's Email Send node - verify the exact output field name in your version. Merges it back onto the full thread (with its bills array) before looping back, so Loop Email Threads' done output carries the enriched data - same technique WF1 uses to get enriched task data out of Loop Invoice Tasks' done output."
+    },
+    {
+      "parameters": {
+        "amount": 1
+      },
+      "id": "c5e62f04-fab6-4a5f-aab6-5df39dce8c12",
+      "name": "Wait 1s (SMTP)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3376,
+        352
+      ],
+      "webhookId": "e59588fa-8bfc-4b6c-8ba8-2a495542ce51",
+      "notes": "Throttle protection between sends."
+    },
+    {
+      "parameters": {
+        "jsCode": "const t = $input.all()[0].json;\nfunction nowIST() {\n  const ist = new Date(Date.now() + 5.5 * 60 * 60 * 1000);\n  const p = n => String(n).padStart(2, '0');\n  return p(ist.getUTCDate()) + '-' + p(ist.getUTCMonth() + 1) + '-' + ist.getUTCFullYear() + ' ' + p(ist.getUTCHours()) + ':' + p(ist.getUTCMinutes()) + ':' + p(ist.getUTCSeconds());\n}\nconst now = nowIST();\nconst output = [];\nfor (const bill of (t.bills || [])) {\n  const row = {\n    bill_no: bill.bill_no,\n    duty_slip_no: bill.duty_slip_no,\n    'Ticket Number': t.ticketNumber,\n    conversationId: t.conversationId,\n    'Message ID': t.messageId,\n    'Last Updated': now,\n    'Last Email Body': t.bodyHtml\n  };\n  if (bill._pdfAttached) {\n    row['Invoice Emailed'] = now;\n  }\n  output.push({ json: row });\n}\nreturn output;\n"
+      },
+      "id": "e3426bc3-6554-43b1-bb81-602db7286147",
+      "name": "Expand Threads to Bill Rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2928,
+        112
+      ],
+      "notes": "Runs once, on the 'done' output of Loop Email Threads. Flattens each thread back into one row per bill_no. Only these 5 columns are sent to the sheet on purpose - Status and every other column are left as WF1 already wrote them, relying on appendOrUpdate's partial-column-update behaviour (verify this against a real row before trusting it)."
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Config - Fill In After Import').all()[0].json.sheetDocumentId }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "={{ $('Config - Fill In After Import').all()[0].json.sheetName }}"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "duty_slip_no"
+          ],
+          "schema": [
+            {
+              "id": "customer_id",
+              "displayName": "customer_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "group_name",
+              "displayName": "group_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "guest_name",
+              "displayName": "guest_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "duty_date",
+              "displayName": "duty_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "car_type",
+              "displayName": "car_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "package",
+              "displayName": "package",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "city",
+              "displayName": "city",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "duty_slip_no",
+              "displayName": "duty_slip_no",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "booking_no",
+              "displayName": "booking_no",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "bill_no",
+              "displayName": "bill_no",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "bill_date",
+              "displayName": "bill_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "bill_amount",
+              "displayName": "bill_amount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "tot_hrs",
+              "displayName": "tot_hrs",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "tot_kms",
+              "displayName": "tot_kms",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "cc_avenue_link",
+              "displayName": "cc_avenue_link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "email_to",
+              "displayName": "email_to",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "email_cc",
+              "displayName": "email_cc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "reminder_frequency",
+              "displayName": "reminder_frequency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Escalation Level 2",
+              "displayName": "Escalation Level 2",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Escalation Level 2 Name",
+              "displayName": "Escalation Level 2 Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Escalation Level 3",
+              "displayName": "Escalation Level 3",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Escalation Level 3 Name",
+              "displayName": "Escalation Level 3 Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "cse_name",
+              "displayName": "cse_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "cse_email_id",
+              "displayName": "cse_email_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "booker_name",
+              "displayName": "booker_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "recipient_type",
+              "displayName": "recipient_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "CC Avenue Payment Link",
+              "displayName": "CC Avenue Payment Link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Invoice ID",
+              "displayName": "Invoice ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Invoice Regenerated",
+              "displayName": "Invoice Regenerated",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Invoice PDF fileId",
+              "displayName": "Invoice PDF fileId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Invoice Emailed",
+              "displayName": "Invoice Emailed",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Ticket Number",
+              "displayName": "Ticket Number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Message ID",
+              "displayName": "Message ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "conversationId",
+              "displayName": "conversationId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Escalation Stage",
+              "displayName": "Escalation Stage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Reminder Count",
+              "displayName": "Reminder Count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Last Reminder Sent",
+              "displayName": "Last Reminder Sent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "PTP Date",
+              "displayName": "PTP Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Payment Date",
+              "displayName": "Payment Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Dispute Reason",
+              "displayName": "Dispute Reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Resolved By",
+              "displayName": "Resolved By",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Last Email Body",
+              "displayName": "Last Email Body",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "CC Avenue Order ID",
+              "displayName": "CC Avenue Order ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Tracking ID",
+              "displayName": "Tracking ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Bank Ref No",
+              "displayName": "Bank Ref No",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Payment Mode",
+              "displayName": "Payment Mode",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Send Thankyou Mail",
+              "displayName": "Send Thankyou Mail",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Last Updated",
+              "displayName": "Last Updated",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "cellFormat": "USER_ENTERED"
+        }
+      },
+      "id": "60a44dc7-eaf3-4691-8d4e-b4d67cea4f9c",
+      "name": "Update Master Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        3152,
+        112
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "OCIyTpxyp8WoPLwe",
+          "name": "Ishaan ECOS"
+        }
+      },
+      "notes": "Matches existing rows by bill_no (already present from WF1) and updates just Ticket Number, conversationId, Message ID and Last Updated on each."
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        16,
+        832
+      ],
+      "id": "b9d29291-ee14-4702-9c0b-ca26f312dfb1",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.cseEmail }}",
+                    "rightValue": "ai.automation@ecosmobility.com",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "05b67262-7089-4496-bf38-7147081151a5"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "6e8117a7-00ee-4b73-b1ed-da4cc8354a20",
+                    "leftValue": "={{ $json.cseEmail }}",
+                    "rightValue": "manoj.k@ecosmobility.com",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "8ed97b84-2968-44a7-b209-da58d998f38e",
+                    "leftValue": "={{ $json.cseEmail }}",
+                    "rightValue": "pushkar.singh@ecosmobility.com",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "0153de36-785f-4d3c-9a32-73233781f881",
+                    "leftValue": "={{ $json.cseEmail }}",
+                    "rightValue": "hifza.parveen@ecosmobility.com",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "78634dce-1edf-4098-9355-6e1ef78d237f",
+                    "leftValue": "={{ $json.cseEmail }}",
+                    "rightValue": "deepak.tiwari@ecosmobility.com",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        2256,
+        16
+      ],
+      "id": "c9e46ffd-b07a-4dfe-98fb-fc0238cd3603",
+      "name": "Route by CSE"
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $json.cseName }} <{{ $json.cseEmail }}>",
+        "toEmail": "={{ $json.toRecipients }}",
+        "subject": "={{ $json.subject }}",
+        "html": "={{ $json.bodyHtml }}",
+        "options": {
+          "appendAttribution": false,
+          "attachments": "={{ $json._binaryKeys }}",
+          "ccEmail": "={{ $json.ccRecipients }}",
+          "bccEmail": "={{ $json.cseEmail }}"
+        }
+      },
+      "id": "42dba877-87a4-42e1-8031-2ad0683ed20e",
+      "name": "Send Email (SMTP) - AI Automation",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        2480,
+        -272
+      ],
+      "webhookId": "8ac51f18-c42e-4072-b1c5-f2c28dba162c",
+      "credentials": {
+        "smtp": {
+          "id": "IXnBNW6tJE7zQhyf",
+          "name": "AI Automation"
+        }
+      },
+      "notes": "VERIFY IN THE N8N UI: exact field names for the installed Email Send (SMTP) node version - 'emailFormat'/'html' and the attachments option shape are a best guess since this can't be checked without live access. Requires an SMTP credential attached (host/port/user/password) - attach after import, same as WF1's Google OAuth2 credentials. IMPORTANT: if the sending mailbox is on Microsoft 365/Exchange Online, confirm SMTP AUTH (Basic Auth) is actually enabled for this mailbox first - Microsoft has been disabling it tenant-wide by default since 2022, and if it's off this node will fail outright with an auth error, not a silent issue. If SMTP AUTH can't be turned on, use a relay (SendGrid/Amazon SES/etc.) instead of connecting directly to smtp.office365.com."
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $json.cseName }} <{{ $json.cseEmail }}>",
+        "toEmail": "={{ $json.toRecipients }}",
+        "subject": "={{ $json.subject }}",
+        "html": "={{ $json.bodyHtml }}",
+        "options": {
+          "appendAttribution": false,
+          "attachments": "={{ $json._binaryKeys }}",
+          "ccEmail": "={{ $json.ccRecipients }}",
+          "bccEmail": "={{ $json.cseEmail }}"
+        }
+      },
+      "id": "737cab68-524c-48bd-a879-0751b69bcc11",
+      "name": "Send Email (SMTP) - Manoj",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        2480,
+        -80
+      ],
+      "webhookId": "8ac51f18-c42e-4072-b1c5-f2c28dba162c",
+      "credentials": {
+        "smtp": {
+          "id": "8k5HkMVT9K5tklIi",
+          "name": "Manoj Kumar SMTP"
+        }
+      },
+      "notes": "VERIFY IN THE N8N UI: exact field names for the installed Email Send (SMTP) node version - 'emailFormat'/'html' and the attachments option shape are a best guess since this can't be checked without live access. Requires an SMTP credential attached (host/port/user/password) - attach after import, same as WF1's Google OAuth2 credentials. IMPORTANT: if the sending mailbox is on Microsoft 365/Exchange Online, confirm SMTP AUTH (Basic Auth) is actually enabled for this mailbox first - Microsoft has been disabling it tenant-wide by default since 2022, and if it's off this node will fail outright with an auth error, not a silent issue. If SMTP AUTH can't be turned on, use a relay (SendGrid/Amazon SES/etc.) instead of connecting directly to smtp.office365.com."
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $json.cseName }} <{{ $json.cseEmail }}>",
+        "toEmail": "={{ $json.toRecipients }}",
+        "subject": "={{ $json.subject }}",
+        "html": "={{ $json.bodyHtml }}",
+        "options": {
+          "appendAttribution": false,
+          "attachments": "={{ $json._binaryKeys }}",
+          "ccEmail": "={{ $json.ccRecipients }}",
+          "bccEmail": "={{ $json.cseEmail }}"
+        }
+      },
+      "id": "baa16688-a6d6-494b-93fc-b0855b749195",
+      "name": "Send Email (SMTP) - Pushkar",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        2480,
+        112
+      ],
+      "webhookId": "8ac51f18-c42e-4072-b1c5-f2c28dba162c",
+      "credentials": {
+        "smtp": {
+          "id": "4peb8z4t3iWFjRtE",
+          "name": "Pushkar Singh SMTP"
+        }
+      },
+      "notes": "VERIFY IN THE N8N UI: exact field names for the installed Email Send (SMTP) node version - 'emailFormat'/'html' and the attachments option shape are a best guess since this can't be checked without live access. Requires an SMTP credential attached (host/port/user/password) - attach after import, same as WF1's Google OAuth2 credentials. IMPORTANT: if the sending mailbox is on Microsoft 365/Exchange Online, confirm SMTP AUTH (Basic Auth) is actually enabled for this mailbox first - Microsoft has been disabling it tenant-wide by default since 2022, and if it's off this node will fail outright with an auth error, not a silent issue. If SMTP AUTH can't be turned on, use a relay (SendGrid/Amazon SES/etc.) instead of connecting directly to smtp.office365.com."
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $json.cseName }} <{{ $json.cseEmail }}>",
+        "toEmail": "={{ $json.toRecipients }}",
+        "subject": "={{ $json.subject }}",
+        "html": "={{ $json.bodyHtml }}",
+        "options": {
+          "appendAttribution": false,
+          "attachments": "={{ $json._binaryKeys }}",
+          "ccEmail": "={{ $json.ccRecipients }}",
+          "bccEmail": "={{ $json.cseEmail }}"
+        }
+      },
+      "id": "ad403e3d-ced7-43e5-a3a4-3e3252492735",
+      "name": "Send Email (SMTP) - Deepak",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        2480,
+        496
+      ],
+      "webhookId": "8ac51f18-c42e-4072-b1c5-f2c28dba162c",
+      "credentials": {
+        "smtp": {
+          "id": "yxZtP0J086RuRQAv",
+          "name": "Deepak Tiwari SMTP"
+        }
+      },
+      "notes": "VERIFY IN THE N8N UI: exact field names for the installed Email Send (SMTP) node version - 'emailFormat'/'html' and the attachments option shape are a best guess since this can't be checked without live access. Requires an SMTP credential attached (host/port/user/password) - attach after import, same as WF1's Google OAuth2 credentials. IMPORTANT: if the sending mailbox is on Microsoft 365/Exchange Online, confirm SMTP AUTH (Basic Auth) is actually enabled for this mailbox first - Microsoft has been disabling it tenant-wide by default since 2022, and if it's off this node will fail outright with an auth error, not a silent issue. If SMTP AUTH can't be turned on, use a relay (SendGrid/Amazon SES/etc.) instead of connecting directly to smtp.office365.com."
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all().map(i => i.json);\n\nconst flaggedKeys = new Set();\nfor (const r of rows) {\n  if (r.Status === 'Pending' && String(r['Invoice Regenerated'] || '').trim() === 'Yes') {\n    flaggedKeys.add(r.customer_id + '||' + r.guest_name);\n  }\n}\n\nreturn rows\n  .filter(r => r.Status === 'Pending' && flaggedKeys.has(r.customer_id + '||' + r.guest_name))\n  .map(r => {\n    const row = Object.assign({}, r);\n    row._isNewlyRegenerated = String(r['Invoice Regenerated'] || '').trim() === 'Yes';\n    return { json: row };\n  });\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        688,
+        1072
+      ],
+      "id": "5e4f17d8-c07e-4905-8fe9-f471834bbe71",
+      "name": "Filter Rows Needing Regeneration Email"
+    },
+    {
+      "parameters": {
+        "jsCode": "function parseISTDate(str) {\n  if (!str) return null;\n  const s = String(str).trim();\n  let m = s.match(/^(\\d{1,2})-(\\d{1,2})-(\\d{4})(?:\\s+(\\d{1,2}):(\\d{2}):(\\d{2}))?$/);\n  if (m) {\n    const d = +m[1], mo = +m[2], y = +m[3], h = m[4] ? +m[4] : 0, mi = m[5] ? +m[5] : 0, se = m[6] ? +m[6] : 0;\n    return new Date(Date.UTC(y, mo - 1, d, h, mi, se) - 5.5 * 60 * 60 * 1000);\n  }\n  m = s.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})/);\n  if (m) {\n    return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]) - 5.5 * 60 * 60 * 1000);\n  }\n  const d2 = new Date(s);\n  return isNaN(d2.getTime()) ? null : d2;\n}\n\nconst items = $input.all();\nconst groups = {};\nfor (const item of items) {\n  const bill = item.json;\n  bill._pdfAttached = !!(item.binary && item.binary.file);\n  const key = bill.customer_id + '||' + bill.guest_name;\n  if (!groups[key]) {\n    groups[key] = {\n      customer_id: bill.customer_id,\n      guest_name: bill.guest_name,\n      emailTo: bill.email_to,\n      emailCc: bill.email_cc,\n      cseEmail: bill.cse_email_id,\n      cseName: bill.cse_name,\n      ticketNumber: bill['Ticket Number'],\n      messageId: bill['Message ID'],\n      conversationId: bill['conversationId'],\n      allBills: [],\n      newBills: [],\n      oldBills: [],\n      binaries: []\n    };\n  }\n  groups[key].allBills.push(bill);\n  if (bill._isNewlyRegenerated) {\n    groups[key].newBills.push(bill);\n  } else {\n    groups[key].oldBills.push(bill);\n  }\n  if (item.binary && item.binary.file) groups[key].binaries.push(item.binary.file);\n}\n\nconst output = [];\nfor (const key of Object.keys(groups)) {\n  const g = groups[key];\n  const historySource = g.oldBills[0] || g.allBills[0];\n  const prevDate = historySource ? parseISTDate(historySource['Last Updated']) : null;\n  const outItem = {\n    json: {\n      customer_id: g.customer_id,\n      guest_name: g.guest_name,\n      emailTo: g.emailTo,\n      emailCc: g.emailCc,\n      cseEmail: g.cseEmail,\n      cseName: g.cseName,\n      ticketNumber: g.ticketNumber,\n      messageId: g.messageId,\n      conversationId: g.conversationId,\n      bills: g.newBills,\n      allBills: g.allBills,\n      previousBodyHtml: (historySource && historySource['Last Email Body']) || '',\n      previousMessageDate: prevDate ? prevDate.toISOString() : ''\n    },\n    binary: {}\n  };\n  const keys = [];\n  g.binaries.forEach((bin, idx) => {\n    const k = 'attachment_' + idx;\n    outItem.binary[k] = bin;\n    keys.push(k);\n  });\n  outItem.json._binaryKeys = keys.join(',');\n  output.push(outItem);\n}\nreturn output;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1584,
+        976
+      ],
+      "id": "ca774ae2-ce1a-4800-af3b-c3b00173f8b3",
+      "name": "Group Regenerated Bills into Threads"
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $('Config - Fill In After Import').all()[0].json;\nconst thread = $input.all()[0].json;\n\nif (!thread || !Array.isArray(thread.allBills) || thread.allBills.length === 0) {\n  return [];\n}\n\n\nfunction esc(v) { return String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }\n\nconst isConsolidate = String((thread.allBills[0] && thread.allBills[0].cc_avenue_link) || '').trim().toLowerCase() === 'consolidate';\nconst isAccenture = String((thread.allBills[0] && thread.allBills[0].customer_id) || '').toUpperCase().includes('ACCENTURE');\n\nconst td = \"style='border:1px solid #ccc;padding:4px;'\";\nconst extraCell = b => isAccenture ? `<td ${td}>${esc(b.tot_hrs)}</td><td ${td}>${esc(b.tot_kms)}</td>` : '';\nconst extraHeaders = isAccenture ? ['Total Hrs','Total Kms'] : [];\n\nlet headers, rowsHtml;\nif (isConsolidate) {\n  rowsHtml = thread.allBills.map(b => `<tr><td ${td}>${esc(b.guest_name)}</td><td ${td}>${esc(b.duty_date)}</td><td ${td}>${esc(b.car_type)}</td><td ${td}>${esc(b.package)}</td>${extraCell(b)}<td ${td}>${esc(b.city)}</td><td ${td}>${esc(b.duty_slip_no)}</td><td ${td}>${esc(b.booking_no)}</td><td ${td}>${esc(b.bill_no)}</td><td ${td}>${esc(b.bill_date)}</td><td ${td}>${esc(b.bill_amount)}</td><td ${td}>${esc(b.customer_id)}</td></tr>`).join('');\n  headers = ['Guest Name','Duty Date','Car Booked Type','Package',...extraHeaders,'City','Duty Slip No.','Booking No.','Bill No.','Bill Date','Bill Amount','Customer Id'];\n} else {\n  rowsHtml = thread.allBills.map(b => `<tr><td ${td}>${esc(b.guest_name)}</td><td ${td}><a href='${esc(b['CC Avenue Payment Link'])}'>${esc(b['CC Avenue Payment Link'])}</a></td><td ${td}>${esc(b.duty_date)}</td><td ${td}>${esc(b.car_type)}</td><td ${td}>${esc(b.package)}</td>${extraCell(b)}<td ${td}>${esc(b.city)}</td><td ${td}>${esc(b.duty_slip_no)}</td><td ${td}>${esc(b.booking_no)}</td><td ${td}>${esc(b.bill_no)}</td><td ${td}>${esc(b.bill_date)}</td><td ${td}>${esc(b.bill_amount)}</td><td ${td}>${esc(b.customer_id)}</td></tr>`).join('');\n  headers = ['Guest Name','CC Avenue Payment Link','Duty Date','Car Booked Type','Package',...extraHeaders,'City','Duty Slip No.','Booking No.','Bill No.','Bill Date','Bill Amount','Customer Id'];\n}\n\nconst headerHtml = headers.map(h => `<th style='border:1px solid #ccc;padding:4px;background-color:#eeeeee;'>${h}</th>`).join('');\nconst totalAmount = thread.allBills.reduce((sum, b) => sum + parseFloat(b.bill_amount || 0), 0).toFixed(2);\nconst paymentLinkLine = isConsolidate ? `<p><strong>Payment Link:</strong> <a href='${esc(thread.allBills[0]['CC Avenue Payment Link'])}'>${esc(thread.allBills[0]['CC Avenue Payment Link'])}</a></p>` : '';\n\nconst LOGO_URL = 'https://drive.google.com/uc?export=view&id=1w4Xl20VAyn71IXhpc7nRKJWWZXNod70f';\nconst BANNER_URL = 'https://drive.google.com/uc?export=view&id=15MTiwDueasdeOuxcOQbQiDEM_m5k9ygt';\n\nconst CSE_SIGNATURE = {\n  'manoj.k@ecosmobility.com': { name: 'MANOJ KUMAR', mobile: '9289526748' },\n  'pushkar.singh@ecosmobility.com': { name: 'PUSHKAR SINGH', mobile: '9220449152' },\n  'hifza.parveen@ecosmobility.com': { name: 'HIFZA PARVEEN', mobile: '9717116659' },\n  'deepak.tiwari@ecosmobility.com': { name: 'DEEPAK TIWARI', mobile: '9211553594' }\n};\nconst sigInfo = CSE_SIGNATURE[String(thread.cseEmail || '').toLowerCase()] || { name: esc(thread.cseName).toUpperCase(), mobile: '' };\n\nconst signature = `<p style='color:#1F3864;'>Thanks &amp; Regards,</p><table cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;'><tr><td style='vertical-align:top; padding-right:15px;'><img src='${LOGO_URL}' width='110' alt='ECO Mobility' style='display:block;'></td><td style='vertical-align:top; font-family:Arial,sans-serif; font-size:13px; color:#1F3864;'><div style='color:#C00000; font-weight:bold; font-size:16px;'>${sigInfo.name}</div><div style='font-weight:bold;'>ASSISTANT MANAGER - FINANCE</div><div style='font-weight:bold;'><span style='color:#C00000;'>M</span> +91- ${esc(sigInfo.mobile)}</div><div style='height:10px;'></div><div style='font-weight:bold;'>Reporting Manager :</div><div>Mr. Dinesh Guleria | <a href='mailto:Dinesh.guleria@ecosmobility.com' style='color:#1F3864;'>Dinesh.guleria@ecosmobility.com</a></div></td></tr></table><p style='font-family:Arial,sans-serif; font-size:13px; color:#1F3864;'><strong>ECOS (India) Mobility &amp; Hospitality Ltd.</strong><br/><strong>Corp Office:</strong> Plot No.45, 1st Floor, Corner Market, Malviya Nagar, New Delhi 110017<br/><strong>24x7 Reservations:</strong> T: +91-11-4079-4079 | E: <a href='mailto:cars@ecosmobility.com' style='color:#1F3864;'>cars@ecosmobility.com</a><br/>W: <a href='https://www.ecosmobility.com' style='color:#1F3864;'>www.ecosmobility.com</a></p><p style='font-family:Arial,sans-serif; font-size:13px; color:#1F3864;'><strong>Ground Transportation in 100+ cities in India and 30+ countries worldwide</strong><br/><strong style='color:#000;'>Chauffeured Car Rental | Employee Transportation Service | Self Drive</strong></p><img src='${BANNER_URL}' width='600' alt='Enjoy Your Travel With Our Cars, Worldwide' style='display:block; max-width:100%;'>`;\n\nconst attachLine = isAccenture\n  ? ''\n  : `<br>The invoice(s) for the newly added bill(s) are attached for your reference.`;\n\nconst newContentHtml = `<p>Dear ${esc(thread.allBills[0].booker_name)},</p><p>We have added additional bill(s) for your further services. Kindly review the same, make the payment, and confirm once completed.${attachLine}<br>In case of any discrepancy or clarification, please feel free to contact the undersigned.</p><p>Thank you for your prompt attention.</p><p><strong>Total Amount: ${esc(totalAmount)}</strong></p>${paymentLinkLine}<table style='border-collapse:collapse;'><tr>${headerHtml}</tr>${rowsHtml}</table>${signature}`;\n\n\nfunction formatGmailQuoteDate(isoStr) {\n  const d = new Date(isoStr);\n  const ist = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);\n  const weekdays = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];\n  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];\n  let hour = ist.getUTCHours();\n  const minute = String(ist.getUTCMinutes()).padStart(2, '0');\n  const ampm = hour >= 12 ? 'PM' : 'AM';\n  hour = hour % 12; if (hour === 0) hour = 12;\n  return `${weekdays[ist.getUTCDay()]}, ${months[ist.getUTCMonth()]} ${ist.getUTCDate()}, ${ist.getUTCFullYear()} at ${hour}:${minute} ${ampm}`;\n}\n\nconst MAX_QUOTED_HISTORY_CHARS = 25000;\nfunction stripHeavyContent(html) {\n  if (!html) return html;\n  return html.replace(/<img[^>]*src=[\"']data:[^\"']*[\"'][^>]*>/gi, '[image removed]');\n}\nfunction capPreviousBody(html) {\n  if (!html || html.length <= MAX_QUOTED_HISTORY_CHARS) return html;\n  return html.slice(0, MAX_QUOTED_HISTORY_CHARS) + '<p><em>[Earlier messages in this thread have been trimmed to keep this email within size limits - the full history remains in the mailbox.]</em></p>';\n}\n\nlet bodyHtml = newContentHtml;\nif (thread.previousBodyHtml && thread.previousMessageDate) {\n  const quoteHeader = `On ${formatGmailQuoteDate(thread.previousMessageDate)}, ${esc(thread.cseName)} &lt;${esc(thread.cseEmail)}&gt; wrote:`;\n  const cleanedPrevious = stripHeavyContent(thread.previousBodyHtml);\n  bodyHtml = `${newContentHtml}<div>${quoteHeader}</div><blockquote style='margin:0 0 0 0.8ex;border-left:1px solid #ccc;padding-left:1ex;'>${capPreviousBody(cleanedPrevious)}</blockquote>`;\n}\n\nconst subject = `Re: Submission of Invoices & Payment Link - ${thread.allBills[0].group_name || ''} - ${cfg.companyName} - ${thread.guest_name} [Ref: ${thread.ticketNumber}]`;\n\nfunction withAngleBrackets(id) {\n  const s = String(id || '').trim();\n  if (!s) return '';\n  return s.startsWith('<') ? s : ('<' + s + '>');\n}\nconst inReplyTo = withAngleBrackets(thread.messageId || thread.conversationId);\nconst referencesParts = [];\nif (thread.conversationId) referencesParts.push(withAngleBrackets(thread.conversationId));\nif (thread.messageId && thread.messageId !== thread.conversationId) referencesParts.push(withAngleBrackets(thread.messageId));\nconst references = referencesParts.join(' ');\n\nconst toList = String(thread.emailTo || '').split(/[;,]/).map(s => s.trim()).filter(Boolean);\nconst ccList = String(thread.emailCc || '').split(/[;,]/).map(s => s.trim()).filter(Boolean);\n\nconst out = Object.assign({}, thread);\nout.subject = subject;\nout.bodyHtml = bodyHtml;\nout.toRecipients = toList.join(';');\nout.ccRecipients = ccList.join(';');\nout.inReplyTo = inReplyTo;\nout.references = references;\nreturn { json: out, binary: $input.all()[0].binary || {} };\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2016,
+        976
+      ],
+      "id": "ba8e567c-2119-4061-ad58-ad0ed1c9b4ab",
+      "name": "Build Regeneration Email Content"
+    },
+    {
+      "parameters": {
+        "jsCode": "const nodemailer = require('nodemailer');\nconst thread = $input.all()[0].json;\nconst binaryData = $input.all()[0].binary || {};\n\nconst SMTP_CREDENTIALS = {\n  'ai.automation@ecosmobility.com': { user: $env.SMTP_USER, pass: $env.SMTP_PASS },\n  'manoj.k@ecosmobility.com': { user: $env.SMTP_USER_MANOJ, pass: $env.SMTP_PASS_MANOJ },\n  'pushkar.singh@ecosmobility.com': { user: $env.SMTP_USER_PUSHKAR, pass: $env.SMTP_PASS_PUSHKAR },\n  'hifza.parveen@ecosmobility.com': { user: $env.SMTP_USER_HIFZA, pass: $env.SMTP_PASS_HIFZA },\n  'deepak.tiwari@ecosmobility.com': { user: $env.SMTP_USER_DEEPAK, pass: $env.SMTP_PASS_DEEPAK }\n};\nconst smtpCreds = SMTP_CREDENTIALS[String(thread.cseEmail || '').toLowerCase()] || { user: $env.SMTP_USER, pass: $env.SMTP_PASS };\n\nconst transporter = nodemailer.createTransport({\n  host: $env.SMTP_HOST,\n  port: parseInt($env.SMTP_PORT, 10),\n  secure: $env.SMTP_SECURE === 'true',\n  auth: { user: smtpCreds.user, pass: smtpCreds.pass }\n});\n\nfunction toCommaList(semicolonList) {\n  return String(semicolonList || '').split(';').map(s => s.trim()).filter(Boolean).join(',');\n}\n\nconst headers = {};\nif (thread.inReplyTo) headers['In-Reply-To'] = thread.inReplyTo;\nif (thread.references) headers['References'] = thread.references;\n\nconst attachments = [];\nconst binaryKeys = String(thread._binaryKeys || '').split(',').filter(Boolean);\nfor (const key of binaryKeys) {\n  if (!binaryData[key]) continue;\n  const buffer = await this.helpers.getBinaryDataBuffer(0, key);\n  attachments.push({\n    filename: binaryData[key].fileName || (key + '.pdf'),\n    content: buffer\n  });\n}\n\nconst info = await transporter.sendMail({\n  from: `\"${thread.cseName}\" <${thread.cseEmail}>`,\n  to: toCommaList(thread.toRecipients),\n  cc: toCommaList(thread.ccRecipients) || undefined,\n  bcc: thread.cseEmail,\n  subject: thread.subject,\n  html: thread.bodyHtml,\n  headers: headers,\n  attachments: attachments.length ? attachments : undefined\n});\n\nreturn { json: Object.assign({}, thread, { messageId: info.messageId }) };\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2240,
+        976
+      ],
+      "id": "0f2a44be-8286-4e57-81db-f80e4908413a",
+      "name": "Send Regeneration Email (SMTP)"
+    },
+    {
+      "parameters": {
+        "jsCode": "const t = $input.all()[0].json;\nfunction nowIST() {\n  const ist = new Date(Date.now() + 5.5 * 60 * 60 * 1000);\n  const p = n => String(n).padStart(2, '0');\n  return p(ist.getUTCDate()) + '-' + p(ist.getUTCMonth() + 1) + '-' + ist.getUTCFullYear() + ' ' + p(ist.getUTCHours()) + ':' + p(ist.getUTCMinutes()) + ':' + p(ist.getUTCSeconds());\n}\nconst now = nowIST();\nconst newBillNos = new Set((t.bills || []).map(b => b.bill_no));\n\nconst MAX_CELL_CHARS = 45000;\nlet storedBody = t.bodyHtml || '';\nif (storedBody.length > MAX_CELL_CHARS) {\n  storedBody = storedBody.slice(0, MAX_CELL_CHARS) + '<p><em>[Trimmed to fit the sheet cell size limit - the full email as actually sent is longer than this stored copy.]</em></p>';\n}\n\n// 2026-09-15: Accenture never gets a PDF attached in this regeneration email (Filter Regen\n// Bills Having PDF excludes them) - the invoice is only ever actually shared when the client\n// requests it (WF4's InvoiceRequest bucket) or in the final thank-you mail (WF5). So Invoice\n// Emailed must never be set here for Accenture, regardless of newBillNos.\nconst isAccenture = String(t.customer_id || '').toUpperCase().includes('ACCENTURE');\n\nconst output = [];\nfor (const bill of (t.allBills || [])) {\n  const row = {\n    bill_no: bill.bill_no,\n    'Message ID': t.messageId,\n    'Last Reminder Sent': now,\n    'Last Updated': now,\n    'Last Email Body': storedBody\n  };\n  if (newBillNos.has(bill.bill_no)) {\n    row['Invoice Regenerated'] = '';\n    if (!isAccenture) {\n      row['Invoice Emailed'] = now;\n    }\n  }\n  output.push({ json: row });\n}\nreturn output;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2464,
+        976
+      ],
+      "id": "8544d8a4-4414-4fbe-909e-a535380d3d60",
+      "name": "Clear Regenerated Flag & Update Sheet"
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config - Fill In After Import').all()[0].json.sheetDocumentId }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $('Config - Fill In After Import').all()[0].json.sheetName }}",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "bill_no"
+          ],
+          "schema": [
+            {
+              "id": "customer_id",
+              "displayName": "customer_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "group_name",
+              "displayName": "group_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "guest_name",
+              "displayName": "guest_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "duty_date",
+              "displayName": "duty_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "car_type",
+              "displayName": "car_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "package",
+              "displayName": "package",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "city",
+              "displayName": "city",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "duty_slip_no",
+              "displayName": "duty_slip_no",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "booking_no",
+              "displayName": "booking_no",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "bill_no",
+              "displayName": "bill_no",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "bill_date",
+              "displayName": "bill_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "bill_amount",
+              "displayName": "bill_amount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "cc_avenue_link",
+              "displayName": "cc_avenue_link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "email_to",
+              "displayName": "email_to",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "email_cc",
+              "displayName": "email_cc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "reminder_frequency",
+              "displayName": "reminder_frequency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Escalation Level 2",
+              "displayName": "Escalation Level 2",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Escalation Level 2 Name",
+              "displayName": "Escalation Level 2 Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Escalation Level 3",
+              "displayName": "Escalation Level 3",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Escalation Level 3 Name",
+              "displayName": "Escalation Level 3 Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "cse_name",
+              "displayName": "cse_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "cse_email_id",
+              "displayName": "cse_email_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "booker_name",
+              "displayName": "booker_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "recipient_type",
+              "displayName": "recipient_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "CC Avenue Payment Link",
+              "displayName": "CC Avenue Payment Link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Invoice ID",
+              "displayName": "Invoice ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Invoice Regenerated",
+              "displayName": "Invoice Regenerated",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Invoice PDF fileId",
+              "displayName": "Invoice PDF fileId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Invoice Emailed",
+              "displayName": "Invoice Emailed",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Ticket Number",
+              "displayName": "Ticket Number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Message ID",
+              "displayName": "Message ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "conversationId",
+              "displayName": "conversationId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Escalation Stage",
+              "displayName": "Escalation Stage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Reminder Count",
+              "displayName": "Reminder Count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Last Reminder Sent",
+              "displayName": "Last Reminder Sent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "PTP Date",
+              "displayName": "PTP Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Payment Date",
+              "displayName": "Payment Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Dispute Reason",
+              "displayName": "Dispute Reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Resolved By",
+              "displayName": "Resolved By",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Last Email Body",
+              "displayName": "Last Email Body",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "CC Avenue Order ID",
+              "displayName": "CC Avenue Order ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Tracking ID",
+              "displayName": "Tracking ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Bank Ref No",
+              "displayName": "Bank Ref No",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Payment Mode",
+              "displayName": "Payment Mode",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Send Thankyou Mail",
+              "displayName": "Send Thankyou Mail",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Last Updated",
+              "displayName": "Last Updated",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2688,
+        976
+      ],
+      "id": "904e5857-dbfe-42ee-8132-956de260e695",
+      "name": "Update Master Sheet1",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "OCIyTpxyp8WoPLwe",
+          "name": "Ishaan ECOS"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "f5c2f3e5-4329-4af6-b055-c69ba864eb8a",
+              "leftValue": "={{ $json['Invoice PDF fileId'] }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            },
+            {
+              "id": "11f06549-8d5c-4182-9fb6-223acb97929f",
+              "leftValue": "={{ $json.customer_id.toUpperCase() }}",
+              "rightValue": "ACCENTURE",
+              "operator": {
+                "type": "string",
+                "operation": "notContains"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        912,
+        1072
+      ],
+      "id": "f8ca9b75-1b8b-40ec-aa23-c7ec70d69332",
+      "name": "Filter Regen Bills Having PDF"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1136,
+        1168
+      ],
+      "id": "f66045f4-c9fb-486c-8383-a58646caa612",
+      "name": "Loop Regen Bills for PDF Download"
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json['Invoice PDF fileId'] }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1360,
+        1168
+      ],
+      "id": "ca53aa82-87b1-45ce-b0f5-8738e51a9e21",
+      "name": "Download Regen Invoice PDF",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "8a69W35Y9s0S4v49",
+          "name": "Ishaan ECOS"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const bill = $('Loop Regen Bills for PDF Download').all()[0].json;\nconst binaryIn = $input.all()[0].binary || {};\nconst out = { json: Object.assign({}, bill) };\nif (binaryIn.data) {\n  const safeName = String(bill.bill_no || 'invoice').replace(/[\\/\\\\]/g, '-') + '.pdf';\n  out.binary = { file: Object.assign({}, binaryIn.data, { fileName: safeName, fileExtension: 'pdf', mimeType: binaryIn.data.mimeType || 'application/pdf' }) };\n}\nreturn out;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1584,
+        1264
+      ],
+      "id": "6939cad4-c926-4929-95e5-89508c685bec",
+      "name": "Combine Regen Bill and Binary"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1360,
+        976
+      ],
+      "id": "2b5d2b8b-5b00-4ffd-9a03-ff6a203f5aed",
+      "name": "Merge Regen PDF Download Paths"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1792,
+        976
+      ],
+      "id": "61d07e39-2595-435f-84a8-aa837843b3b6",
+      "name": "Loop Regeneration Threads"
+    },
+    {
+      "parameters": {
+        "amount": 1
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2896,
+        976
+      ],
+      "id": "99840a42-4a05-4398-aa85-f8145552a0b1",
+      "name": "Wait",
+      "webhookId": "ec8a32ac-a163-4f5c-b158-8a9da0a8024c"
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $json.cseName }} <{{ $json.cseEmail }}>",
+        "toEmail": "={{ $json.toRecipients }}",
+        "subject": "={{ $json.subject }}",
+        "html": "={{ $json.bodyHtml }}",
+        "options": {
+          "appendAttribution": false,
+          "attachments": "={{ $json._binaryKeys }}",
+          "ccEmail": "={{ $json.ccRecipients }}",
+          "bccEmail": "={{ $json.cseEmail }}"
+        }
+      },
+      "id": "94dc5f9a-f5fb-4435-b5fd-c7a7be8b933d",
+      "name": "Send Email (SMTP) - Hifza",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        2480,
+        304
+      ],
+      "webhookId": "8ac51f18-c42e-4072-b1c5-f2c28dba162c",
+      "credentials": {
+        "smtp": {
+          "id": "uDaJwnHbOo6e5HqI",
+          "name": "Hifza Parveen SMTP"
+        }
+      },
+      "notes": "VERIFY IN THE N8N UI: exact field names for the installed Email Send (SMTP) node version - 'emailFormat'/'html' and the attachments option shape are a best guess since this can't be checked without live access. Requires an SMTP credential attached (host/port/user/password) - attach after import, same as WF1's Google OAuth2 credentials. IMPORTANT: if the sending mailbox is on Microsoft 365/Exchange Online, confirm SMTP AUTH (Basic Auth) is actually enabled for this mailbox first - Microsoft has been disabling it tenant-wide by default since 2022, and if it's off this node will fail outright with an auth error, not a silent issue. If SMTP AUTH can't be turned on, use a relay (SendGrid/Amazon SES/etc.) instead of connecting directly to smtp.office365.com."
+    }
+  ],
+  "pinData": {
+    "WF1 Trigger": [
+      {
+        "json": {
+          "headers": {
+            "host": "n8n-bcuj.srv1811088.hstgr.cloud",
+            "user-agent": "n8n",
+            "content-length": "7",
+            "accept": "application/json,text/html,application/xhtml+xml,application/xml,text/*;q=0.9, image/*;q=0.8, */*;q=0.7",
+            "accept-encoding": "gzip, compress, deflate, br",
+            "content-type": "application/json",
+            "x-forwarded-for": "172.16.0.2",
+            "x-forwarded-host": "n8n-bcuj.srv1811088.hstgr.cloud",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "srv1811088",
+            "x-real-ip": "172.16.0.2"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "": ""
+          },
+          "webhookUrl": "https://n8n-bcuj.srv1811088.hstgr.cloud/webhook/wf2-start",
+          "executionMode": "production"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "WF1 Trigger": {
+      "main": [
+        [
+          {
+            "node": "Config - Fill In After Import",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config - Fill In After Import": {
+      "main": [
+        [
+          {
+            "node": "Read Master Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Master Sheet": {
+      "main": [
+        [
+          {
+            "node": "Filter Rows Needing First Email",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Filter Rows Needing Regeneration Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Rows Needing First Email": {
+      "main": [
+        [
+          {
+            "node": "Filter Bills Having PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Bills Having PDF": {
+      "main": [
+        [
+          {
+            "node": "Loop Bills for PDF Download",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Merge PDF Download Paths",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Bills for PDF Download": {
+      "main": [
+        [
+          {
+            "node": "Merge PDF Download Paths",
+            "type": "main",
+            "index": 1
+          }
+        ],
+        [
+          {
+            "node": "Download Invoice PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Invoice PDF": {
+      "main": [
+        [
+          {
+            "node": "Combine Bill and Binary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine Bill and Binary": {
+      "main": [
+        [
+          {
+            "node": "Loop Bills for PDF Download",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge PDF Download Paths": {
+      "main": [
+        [
+          {
+            "node": "Group Bills into Email Threads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Group Bills into Email Threads": {
+      "main": [
+        [
+          {
+            "node": "Loop Email Threads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Email Threads": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Build Email Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Email Content": {
+      "main": [
+        [
+          {
+            "node": "Route by CSE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Send Result": {
+      "main": [
+        [
+          {
+            "node": "Expand Threads to Bill Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 1s (SMTP)": {
+      "main": [
+        [
+          {
+            "node": "Loop Email Threads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expand Threads to Bill Rows": {
+      "main": [
+        [
+          {
+            "node": "Update Master Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Config - Fill In After Import",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by CSE": {
+      "main": [
+        [
+          {
+            "node": "Send Email (SMTP) - AI Automation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Email (SMTP) - Manoj",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Email (SMTP) - Pushkar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Email (SMTP) - Hifza",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Email (SMTP) - Deepak",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email (SMTP) - AI Automation": {
+      "main": [
+        [
+          {
+            "node": "Record Send Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email (SMTP) - Manoj": {
+      "main": [
+        [
+          {
+            "node": "Record Send Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email (SMTP) - Pushkar": {
+      "main": [
+        [
+          {
+            "node": "Record Send Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email (SMTP) - Deepak": {
+      "main": [
+        [
+          {
+            "node": "Record Send Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Master Sheet": {
+      "main": [
+        [
+          {
+            "node": "Wait 1s (SMTP)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Rows Needing Regeneration Email": {
+      "main": [
+        [
+          {
+            "node": "Filter Regen Bills Having PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Group Regenerated Bills into Threads": {
+      "main": [
+        [
+          {
+            "node": "Loop Regeneration Threads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Regeneration Email Content": {
+      "main": [
+        [
+          {
+            "node": "Send Regeneration Email (SMTP)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Regeneration Email (SMTP)": {
+      "main": [
+        [
+          {
+            "node": "Clear Regenerated Flag & Update Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clear Regenerated Flag & Update Sheet": {
+      "main": [
+        [
+          {
+            "node": "Update Master Sheet1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Regen Bills Having PDF": {
+      "main": [
+        [
+          {
+            "node": "Loop Regen Bills for PDF Download",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Merge Regen PDF Download Paths",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Regen Bills for PDF Download": {
+      "main": [
+        [
+          {
+            "node": "Merge Regen PDF Download Paths",
+            "type": "main",
+            "index": 1
+          }
+        ],
+        [
+          {
+            "node": "Download Regen Invoice PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Regen Invoice PDF": {
+      "main": [
+        [
+          {
+            "node": "Combine Regen Bill and Binary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine Regen Bill and Binary": {
+      "main": [
+        [
+          {
+            "node": "Loop Regen Bills for PDF Download",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Regen PDF Download Paths": {
+      "main": [
+        [
+          {
+            "node": "Group Regenerated Bills into Threads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Regeneration Threads": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Build Regeneration Email Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Master Sheet1": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Loop Regeneration Threads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email (SMTP) - Hifza": {
+      "main": [
+        [
+          {
+            "node": "Record Send Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "sMnoyyBGw6Jw59db",
+    "callerPolicy": "workflowsFromSameOwner",
+    "saveDataSuccessExecution": "all"
+  },
+  "versionId": "0d23f25c-70dc-4a2c-b136-02f30de257c2",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "4534d142c55ad5707d5935d8cbbd5bcb038e63dde7c8fcde73223b092d8bf571"
+  },
+  "nodeGroups": [],
+  "id": "9ZcQoTVOYodo5oDD",
+  "tags": []
+}
