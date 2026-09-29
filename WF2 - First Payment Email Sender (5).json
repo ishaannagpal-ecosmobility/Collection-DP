@@ -1704,6 +1704,16 @@
                 "type": "string",
                 "operation": "notContains"
               }
+            },
+            {
+              "id": "3b8e1c2a-7d4f-4e9a-9c51-6a2f0d8b7e14",
+              "leftValue": "={{ $json._isNewlyRegenerated }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
             }
           ],
           "combinator": "and"
